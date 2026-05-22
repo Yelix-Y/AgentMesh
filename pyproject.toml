@@ -1,0 +1,28 @@
+[project]
+name = "agentmesh"
+version = "0.1.0"
+description = "AI Organization Simulator — digital coworkers that collaborate through natural language"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "anthropic>=0.28",
+    "rich>=13.7",
+]
+
+[project.scripts]
+agentmesh = "agentmesh.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
