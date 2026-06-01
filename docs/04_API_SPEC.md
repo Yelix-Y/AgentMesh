@@ -1,185 +1,143 @@
-# AgentMesh API 与 Schema 设计
+# AgentMesh — API & Schema Specification
 
-AgentMesh MVP 以 CLI 和 Python Engine API 为主，后续可平滑封装为 FastAPI REST 服务。
+AgentMesh ships as a Python package plus a Typer CLI. This document specifies the CLI surface, the Python engine API, and the core Pydantic schemas. A FastAPI layer can wrap these later without changing the model.
 
 ## 1. CLI API
 
-### 创建 Agent
+The CLI is `agentmesh` (Typer + Rich). It initializes the SQLite database on every invocation.
 
+### Load and validate an agent profile
 ```bash
-agentmesh agent create \
-  --name planner \
-  --role planner \
-  --skills planning,memory_search,review
+agentmesh agent load agents/developer.yaml
 ```
+Prints a table of the parsed `AgentProfile`. Exits non-zero on a missing file or validation error.
 
-输出：
-
-```json
-{
-  "agent_id": "agent_001",
-  "name": "planner",
-  "role": "planner",
-  "status": "created"
-}
-```
-
-### 运行任务
-
+### Show an agent's status
 ```bash
-agentmesh task run \
-  --agent planner \
-  --input "生成 AgentMesh 的 MVP 技术方案" \
-  --output json
+agentmesh agent status developer
 ```
+Shows the agent's current state and unread-inbox summary (count, latest sender, latest message type).
 
-输出：
-
-```json
-{
-  "task_id": "task_001",
-  "status": "completed",
-  "agents": ["planner", "executor", "reviewer"],
-  "skill_invocations": 5,
-  "result": {
-    "summary": "已生成 MVP 技术方案",
-    "artifacts": ["docs/02_ARCHITECTURE.md"]
-  }
-}
-```
-
-### 查询任务
-
+### Inject a message from the human operator
 ```bash
-agentmesh task status --task-id task_001
+agentmesh agent message developer "Please implement an OAuth refresh token flow."
 ```
+Publishes a `HUMAN_INTERVENTION` message from `human` to the named agent.
 
-### 查看记忆
-
+### Watch the live message stream
 ```bash
-agentmesh memory show --agent planner
+agentmesh watch --interval 1.0
 ```
+Streams every message between agents, color-coded by `MessageType`, until interrupted.
 
-### 查看 Skill
+## 2. Python Engine API
 
-```bash
-agentmesh skill list
-```
-
-## 2. Engine API
-
-### AgentRuntime.run
-
+### Message bus
 ```python
-result = await agent_runtime.run(
-    agent_id="agent_001",
-    task_input={
-        "goal": "生成技术架构文档",
-        "constraints": ["中文", "可落地", "包含流程图"]
-    }
-)
+from agentmesh.bus.message_bus import MessageBus
+from agentmesh.models.message import ACPMessage, MessageType
+
+bus = MessageBus()
+
+bus.publish(ACPMessage(
+    sender_id="alex",
+    recipient_id="jordan",
+    message_type=MessageType.COMPLETION_REPORT,
+    body="Implemented the refresh flow. Watch the clock-skew edge case.",
+))
+
+inbox = bus.poll("jordan")          # unread messages, oldest first
+bus.consume(inbox[0].id)            # mark as read
+thread = bus.get_thread(inbox[0].thread_id)  # full conversation
 ```
 
-### SkillScheduler.select
-
+### Memory store (isolated per agent)
 ```python
-skills = scheduler.select(
-    task_goal="生成技术架构文档",
-    agent_role="planner",
-    allowed_skills=["planning", "memory_search"]
-)
+from agentmesh.memory.store import MemoryStore
+
+mem = MemoryStore()
+mem.write("alex", "short", "Currently working on OAuth refresh.")
+mem.write("alex", "long", "Project uses single-use refresh tokens.")
+
+mine = mem.read("alex", "long", requesting_agent_id="alex")   # OK
+mem.read("alex", "long", requesting_agent_id="jordan")        # raises PermissionError
+mem.clear_short_term("alex")
 ```
 
-### SkillExecutor.invoke
-
+### Agent state machine
 ```python
-output = await executor.invoke(
-    skill_name="planning",
-    payload={
-        "task_goal": "生成技术架构文档",
-        "context": "AgentMesh 是多智能体协作引擎"
-    }
-)
+from agentmesh.runtime.state_machine import AgentStateMachine, AgentState
+
+sm = AgentStateMachine("alex")
+sm.transition(AgentState.READING)
+sm.transition(AgentState.PLANNING)
+sm.transition(AgentState.EXECUTING)
+sm.escalate()                       # → ESCALATING from any state
 ```
 
-## 3. 核心 Schema
+### Profile loading
+```python
+from agentmesh.models.loader import load_profile, load_profiles_from_dir
 
-### Agent
-
-```json
-{
-  "agent_id": "string",
-  "name": "string",
-  "role": "planner | executor | reviewer | custom",
-  "system_prompt": "string",
-  "allowed_skills": ["string"],
-  "memory_policy": {
-    "short_term_limit": 20,
-    "long_term_enabled": true
-  },
-  "created_at": "datetime"
-}
+profile = load_profile("agents/developer.yaml")
+profiles = load_profiles_from_dir("agents/")
 ```
 
-### Task
+## 3. Core Schemas
 
-```json
-{
-  "task_id": "string",
-  "input": "string",
-  "status": "created | planning | running | reviewing | completed | failed",
-  "assigned_agents": ["string"],
-  "created_at": "datetime",
-  "updated_at": "datetime"
-}
+### AgentProfile
+```python
+class LLMBackendConfig(BaseModel):
+    provider: Literal["anthropic", "mock"] = "mock"
+    model: str = "claude-sonnet-4-5"
+    temperature: float = 0.7
+    max_tokens: int = 4096
+
+class WorkerConfig(BaseModel):
+    type: Literal["mock", "bash"] = "mock"
+    timeout_seconds: int = 60
+
+class AgentProfile(BaseModel):
+    name: str
+    role: Literal["developer", "tester", "reviewer"]
+    personality: str       # natural-language persona
+    working_style: str     # how the agent approaches work
+    specialization: str    # what the agent is expert in
+    llm_backend: LLMBackendConfig
+    worker: WorkerConfig
 ```
 
-### SkillInvocation
+### ACPMessage
+```python
+class MessageType(str, Enum):
+    TASK_HANDOFF = "TASK_HANDOFF"
+    CLARIFICATION_REQUEST = "CLARIFICATION_REQUEST"
+    STATUS_UPDATE = "STATUS_UPDATE"
+    COMPLETION_REPORT = "COMPLETION_REPORT"
+    REJECTION = "REJECTION"
+    ESCALATION = "ESCALATION"
+    REVIEW_REQUEST = "REVIEW_REQUEST"
+    REVIEW_DECISION = "REVIEW_DECISION"
+    HUMAN_INTERVENTION = "HUMAN_INTERVENTION"
 
-```json
-{
-  "invocation_id": "string",
-  "task_id": "string",
-  "agent_id": "string",
-  "skill_name": "string",
-  "input": {},
-  "output": {},
-  "status": "success | failed | timeout",
-  "duration_ms": 0,
-  "error": null
-}
+class ACPMessage(BaseModel):
+    id: str                # uuid
+    thread_id: str         # uuid; groups a conversation
+    sender_id: str
+    recipient_id: str
+    message_type: MessageType
+    body: str              # natural-language content
+    metadata: dict[str, Any]
+    created_at: datetime
+    read: bool
 ```
 
-### TaskResult
+## 4. Future REST Mapping
 
-```json
-{
-  "task_id": "string",
-  "status": "completed",
-  "summary": "string",
-  "artifacts": [
-    {
-      "type": "file",
-      "path": "docs/02_ARCHITECTURE.md"
-    }
-  ],
-  "metrics": {
-    "agent_count": 3,
-    "skill_invocation_count": 5,
-    "duration_ms": 10000
-  }
-}
-```
-
-## 4. 后续 REST API 映射
-
-| CLI / Engine 能力 | REST API |
-| --- | --- |
-| agent create | POST /agents |
-| agent list | GET /agents |
-| task run | POST /tasks |
-| task status | GET /tasks/{task_id} |
-| memory show | GET /agents/{agent_id}/memories |
-| skill list | GET /skills |
-| skill invoke | POST /skills/{skill_name}/invoke |
-
+| CLI / Engine capability | Future REST endpoint |
+|---|---|
+| `agent load` | `POST /agents` |
+| `agent status` | `GET /agents/{name}` |
+| `agent message` | `POST /agents/{name}/messages` |
+| `bus.get_thread` | `GET /threads/{thread_id}` |
+| `watch` | `GET /messages/stream` (SSE/WebSocket) |

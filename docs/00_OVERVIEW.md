@@ -1,68 +1,76 @@
-# AgentMesh 项目总览
+# AgentMesh — Project Overview
 
-## 一句话定位
+## One-line Positioning
 
-AgentMesh 是一个 **多智能体协作与技能调度引擎**，用于把复杂任务拆解给多个具有独立记忆和角色能力的 Agent，并通过统一 Skill 调度机制完成可追踪、可复用、可扩展的自动化执行。
+AgentMesh is an **AI Organization Simulator** — a system of human-like digital coworkers that collaborate **purely through natural-language messages**, the way colleagues do inside a real company. It is **not** a traditional multi-agent orchestration or tool-calling framework.
 
-## 目标用户
+## Core Thesis
 
-- 需要构建 AI Agent 工具链的后端工程师。
-- 希望学习多 Agent 编排、LLM Tool Calling、任务调度与插件化架构的开发者。
-- 需要将研发、检索、代码审查、文档生成等任务自动化的个人或小团队。
+> **Better coordination = smarter outcomes**, independent of model size.
 
-## 项目边界
+Instead of assuming `bigger model = smarter`, AgentMesh explores whether a small organization of specialized agents — each with personality, memory, and autonomy — can outperform a single super-agent. The lever we pull is **coordination quality**, not parameter count.
 
-### 需要实现
+## What Makes It Different
 
-- Agent 注册、加载、执行与状态维护。
-- Agent 独立 Memory，包括短期上下文与长期摘要。
-- Skill 注册表、输入输出 Schema、动态选择与调用。
-- 多 Agent 协作流程，例如 Planner -> Executor -> Reviewer。
-- CLI 操作入口，支持任务提交、执行观察和结果导出。
-- Docker 化运行环境。
+- Agents do **not** call each other as tools or functions. They send each other natural-language messages.
+- Knowledge travels through **communication**, not through shared memory. Each agent has an isolated memory store that no other agent can read.
+- Every interaction is an **ACP (Agent Communication Protocol) message** with a typed intent (e.g. `TASK_HANDOFF`, `COMPLETION_REPORT`, `REVIEW_DECISION`) and a free-form natural-language body.
 
-### 暂不优先实现
+## Target Users
 
-- 完整 Web 前端。
-- 企业级权限系统。
-- Kubernetes 生产集群。
-- 大规模分布式调度。
-- 自研向量数据库。
+- Engineers who want to study agent coordination, message-driven architectures, and emergent collaboration.
+- Builders curious whether structured communication can substitute for scale.
+- Small teams who want auditable, observable multi-agent collaboration on a local machine.
 
-## 核心设计原则
+## MVP: Three Digital Coworkers
 
-1. **文档先行**：先明确产品、架构、Schema、模块边界，再进入代码。
-2. **CLI 优先**：先做稳定命令行入口，降低 MVP 复杂度。
-3. **模块可替换**：LLM Provider、Memory Store、Skill Executor 均通过接口抽象。
-4. **结构化输出**：所有 Agent 与 Skill 的结果都可被程序继续消费。
-5. **可观测执行**：每次任务拆解、Skill 调用、状态变更都写入事件日志。
+| Agent | Persona | Responsibility |
+|---|---|---|
+| **Alex** (Developer) | Pragmatic, detail-oriented | Implement, plan, hand off |
+| **Jordan** (Tester) | Skeptical, meticulous | Test, surface edge cases |
+| **Morgan** (Reviewer) | Senior, high-standards | Synthesize, decide, enforce quality |
 
-## 核心流程
+## Collaboration Flow
 
 ```mermaid
 flowchart TD
-    U[User / CLI] --> T[Task Orchestrator]
-    T --> P[Planner Agent]
-    P --> S[Skill Scheduler]
-    S --> R[Skill Registry]
-    R --> K1[Search Skill]
-    R --> K2[Code Skill]
-    R --> K3[File Skill]
-    R --> K4[Review Skill]
-    K1 --> E[Executor Agent]
-    K2 --> E
-    K3 --> E
-    E --> V[Reviewer Agent]
-    V --> M[Memory Manager]
-    M --> O[Structured Output]
+    H[Human Operator] -->|TASK_HANDOFF| A[Alex / Developer]
+    A -->|COMPLETION_REPORT| J[Jordan / Tester]
+    J -->|COMPLETION_REPORT findings| M[Morgan / Reviewer]
+    M -->|REVIEW_DECISION| A
+    A -. CLARIFICATION_REQUEST .-> H
+    A -. ESCALATION .-> H
 ```
 
-## 推荐 MVP 成功标准
+All arrows are **natural-language messages** flowing through a shared message bus. No agent invokes another agent's code.
 
-- 支持至少 3 类 Agent 角色：Planner、Executor、Reviewer。
-- 支持至少 5 个 Skill：planning、memory_search、file_io、code_runner、review。
-- 支持至少 4 个 CLI 命令：agent create、task run、task status、memory show。
-- 每个任务保留完整事件日志，包括 Agent 决策、Skill 调用、耗时与结果。
-- 所有核心输入输出使用 Pydantic / dataclass Schema 约束。
-- Docker 一条命令启动本地运行环境。
+## Project Boundaries
 
+### In scope
+- Agent profiles (personality, working style, specialization) loaded from YAML.
+- A SQLite-backed message bus carrying typed ACP messages.
+- Isolated per-agent memory (short-term + long-term) with cross-agent read protection.
+- An agent state machine (`IDLE → READING → PLANNING → EXECUTING → REPORTING → WAITING`).
+- A CLI to load agents, inspect status, inject human messages, and watch the live message stream.
+
+### Not prioritized (for now)
+- A full web frontend.
+- Enterprise authn/authz.
+- Kubernetes / distributed scheduling.
+- A self-built vector database.
+
+## Design Principles
+
+1. **Communication over invocation** — agents coordinate by messaging, never by calling each other.
+2. **Memory isolation** — knowledge spreads only through messages; reading another agent's memory raises an error.
+3. **Typed intent, free-form body** — every message has a `MessageType` plus a natural-language body.
+4. **Observable by default** — every message and state change is persisted and streamable via `agentmesh watch`.
+5. **Swappable backends** — LLM provider and worker are abstracted behind config (`anthropic` / `mock`).
+
+## MVP Success Criteria
+
+- At least three agent roles: developer, tester, reviewer.
+- A working message bus with publish / poll / consume / thread retrieval.
+- Isolated memory that rejects cross-agent reads.
+- A validated agent state machine that rejects illegal transitions.
+- A CLI that can load a profile, show status, inject a message, and stream the feed.

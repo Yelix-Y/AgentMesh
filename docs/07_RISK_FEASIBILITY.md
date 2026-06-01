@@ -1,91 +1,56 @@
-# AgentMesh 风险、可行性与创新分析
+# AgentMesh — Risk, Feasibility & Innovation Analysis
 
-## 1. 功能可行性分析
+## 1. Feasibility by Capability
 
-| 功能 | 描述 | 可行性 | 创新点 | 价值 |
-| --- | --- | --- | --- | --- |
-| Agent Runtime | 管理 Agent 角色、任务执行和状态 | 中等 | 将 Agent 作为可配置运行单元 | 支撑多 Agent 协作 |
-| 独立记忆 | 每个 Agent 拥有隔离 Memory | 中等 | 避免上下文污染 | 支持跨任务延续 |
-| Skill Registry | 统一注册和查询能力模块 | 容易 | 插件化能力管理 | 降低扩展成本 |
-| Skill Scheduler | 根据任务选择 Skill | 中等 | 规则 + LLM Router 可逐步升级 | 提高自动化程度 |
-| 多 Agent 协作 | Planner / Executor / Reviewer 分工 | 中等 | 模拟团队协作流程 | 提高复杂任务质量 |
-| 结构化输出 | 使用统一 Schema 返回结果 | 容易 | 结果可被程序继续消费 | 提升工程稳定性 |
-| asyncio 并发 | 并发执行 IO / LLM 调用 | 中等 | 提升吞吐与响应速度 | 适合多 Skill 场景 |
-| multiprocessing 隔离 | 高风险 Skill 独立进程执行 | 中等 | 防止阻塞和崩溃扩散 | 提升系统鲁棒性 |
-| CLI 工具 | Click / Typer 命令行操作 | 容易 | 便于开发者使用与演示 | 降低使用门槛 |
-| Docker 部署 | 固化运行环境 | 容易 | 方便复现和交付 | 增强工程完整度 |
+| Capability | Description | Feasibility | Innovation | Value |
+|---|---|---|---|---|
+| Message bus (ACP) | Typed natural-language messages over SQLite | Easy | Coordination as messaging, not tool-calling | Core nervous system |
+| Isolated memory | Per-agent memory, no cross-agent reads | Medium | Knowledge spreads only by communication | Prevents context pollution, models real teams |
+| Agent state machine | Enforced lifecycle per agent | Easy | Explicit, auditable agent behavior | Predictable, debuggable runtime |
+| Personality profiles | NL persona / working style / specialization | Easy | Agents as colleagues, not functions | Emergent, human-like collaboration |
+| LLM provider abstraction | Mock today, Anthropic next | Medium | Runs offline or with real reasoning | Testable without API spend |
+| Agent supervisor | Polling loop driving the org | Medium | Autonomous, message-driven progress | End-to-end MVP |
+| Observability (watch + events) | Live stream + event log | Easy | Replayable decision trail | Trust and debuggability |
 
-## 2. 主要风险
+## 2. Key Risks
 
-### LLM 输出不稳定
+### 2.1 Unstable LLM output
+**Risk:** an agent emits an unusable or off-protocol message.
+**Mitigation:** typed `MessageType` constrains intent; the Reviewer (Morgan) acts as a quality gate; escalate on uncertainty instead of guessing.
 
-风险：模型可能返回不可解析内容。
+### 2.2 Coordination breakdown (deadlock / ping-pong)
+**Risk:** agents wait on each other forever, or bounce a task back and forth.
+**Mitigation:** the state machine has explicit `WAITING` and `ESCALATING` states; unresolved loops escalate to the human via `ESCALATION`.
 
-缓解：
+### 2.3 Memory pollution / leakage
+**Risk:** one agent's context contaminates another's.
+**Mitigation:** memory is physically isolated per `agent_id`; `MemoryStore.read` raises `PermissionError` on cross-agent access. Knowledge can only cross boundaries as an explicit message.
 
-- 强制 JSON Schema。
-- 增加输出重试。
-- 增加 Reviewer Agent 校验。
+### 2.4 Worker execution risk
+**Risk:** a `bash` worker runs something dangerous or hangs.
+**Mitigation:** `worker.timeout_seconds`, a `mock` default, and (future) command constraints / process isolation.
 
-### Skill 调度错误
+### 2.5 Scope creep
+**Risk:** pulling in FastAPI, Redis, Postgres, and Kubernetes too early dilutes the MVP.
+**Mitigation:** CLI-first, SQLite-first, single-process. Service-ization is explicitly deferred.
 
-风险：Scheduler 选择了不合适的 Skill。
+## 3. Where the Innovation Lies
 
-缓解：
+AgentMesh's novelty is not a single new technique — it is the **architectural stance**:
 
-- MVP 使用规则调度保证可控。
-- 给 Skill 增加 tags 和 allowed_roles。
-- 记录调度命中原因。
+- **Communication, not invocation.** Agents coordinate exclusively through typed natural-language messages. There is no tool-call graph between agents.
+- **Memory isolation as a first-class constraint.** Modeling real teams, knowledge must be *communicated* to spread, which forces explicit, auditable handoffs.
+- **Coordination as the lever for intelligence.** The central hypothesis — *better coordination beats a bigger model* — is testable: vary the protocol and roles, hold the model fixed, measure outcome quality.
+- **Observable by construction.** Because every capability is a message, the whole collaboration is streamable and replayable.
 
-### Agent 记忆污染
+## 4. Suggested Metrics
 
-风险：不同 Agent 的上下文混用。
+Once the MVP runs end-to-end, track:
 
-缓解：
-
-- MemoryItem 必须绑定 agent_id。
-- 任务级上下文和 Agent 级记忆分离。
-- 长期记忆写入前经过 summarize / review。
-
-### 代码执行风险
-
-风险：code_runner 执行危险命令或长时间阻塞。
-
-缓解：
-
-- 命令白名单。
-- multiprocessing 隔离。
-- timeout 强制终止。
-- 默认只允许项目目录内操作。
-
-### 项目范围过大
-
-风险：一次性引入 FastAPI、Redis、PostgreSQL、Kubernetes 导致 MVP 失焦。
-
-缓解：
-
-- CLI 优先。
-- 本地文件存储优先。
-- 后续再扩展服务化与分布式能力。
-
-## 3. 创新性判断
-
-AgentMesh 的创新点不在于单个技术新，而在于工程组合方式：
-
-- 把多 Agent 分工、Skill 插件化、独立记忆和结构化输出组合成完整闭环。
-- 用 Click / Typer 提供工程友好的 Agent-CLI，而不是只做聊天界面。
-- 用 asyncio + multiprocessing 区分 IO 并发和高风险任务隔离。
-- 通过事件日志让 Agent 决策过程可追踪、可回放、可调试。
-
-## 4. 推荐量化指标
-
-开发完成后可记录以下指标：
-
-- Agent 角色数量：3+。
-- MVP Skill 数量：5+。
-- CLI 命令数量：8+。
-- 核心单元测试数量：10+。
-- 单任务事件日志覆盖率：100%。
-- Skill 调用结果结构化率：100%。
-- Docker 启动步骤：1 条命令。
-
+- Number of agent roles (target: 3 — developer, tester, reviewer).
+- Number of ACP message types exercised (target: full set of 9).
+- Task completion rate without human escalation.
+- Average messages per completed task (coordination overhead).
+- Memory-isolation violations (target: 0 — enforced by `PermissionError`).
+- Fraction of sessions fully replayable from the event log (target: 100%).
+- Outcome quality at fixed model size, with vs. without the review step (the core thesis test).

@@ -1,65 +1,65 @@
-# AgentMesh PRD
+# AgentMesh — Product Requirements Document (PRD)
 
-## 1. 背景
+## 1. Background
 
-普通单 Agent 应用容易遇到三个问题：
+Single-agent applications tend to hit three walls:
 
-- 上下文过长后难以保持稳定状态。
-- 工具调用缺少统一调度，能力模块不可复用。
-- 复杂任务缺少规划、执行、审查之间的协作边界。
+- As context grows, the agent loses coherence and stable state.
+- A lone agent has no second opinion: mistakes, blind spots, and overconfidence go unchecked.
+- "Bigger model" is the only obvious lever, which is expensive and has diminishing returns.
 
-AgentMesh 通过多 Agent 分工、独立记忆、Skill Registry 与调度引擎解决这些问题，使复杂任务执行过程更加可控、可扩展、可观测。
+AgentMesh takes a different bet: a small **organization** of specialized coworkers that communicate in natural language. Quality comes from **coordination** — handoffs, reviews, clarifications, and escalation — rather than from a single large model.
 
-## 2. 产品目标
+## 2. Product Goals
 
-- 构建一个可运行的多智能体协作引擎。
-- 支持 Agent 独立记忆和跨任务状态延续。
-- 支持 Skill 动态注册、调度和组合执行。
-- 提供 CLI 驱动的任务执行体验。
-- 为后续 FastAPI 服务化、Web UI、分布式任务队列预留接口。
+- Build a runnable simulator of digital coworkers that collaborate through natural-language messages.
+- Give each agent an isolated memory and a distinct personality / specialization.
+- Make every interaction a typed, persisted, observable ACP message.
+- Provide a CLI to drive and watch the organization locally.
+- Keep backends swappable (mock vs. Anthropic LLM) so the system runs with or without API access.
 
-## 3. 用户故事
+## 3. User Stories
 
-### 研发助手场景
+### Coordinated delivery
+As an operator, I hand a task to **Alex** (developer). Alex plans, implements, and hands off a natural-language completion report to **Jordan** (tester), who probes edge cases and reports findings to **Morgan** (reviewer), who issues a review decision back to Alex.
 
-作为开发者，我希望提交一个需求描述后，系统可以自动拆解任务、调用文件读写 / 代码分析 / 测试执行 Skill，并由 Reviewer Agent 给出最终检查结论。
+### Clarification and escalation
+As an operator, when an agent is blocked or the request is ambiguous, I want it to send a `CLARIFICATION_REQUEST` or `ESCALATION` message back to me instead of guessing.
 
-### 文档生成场景
+### Memory continuity, without leakage
+As an operator, I want each agent to remember its own prior context across tasks, while being **unable** to read another agent's memory — knowledge should spread only by messaging.
 
-作为项目维护者，我希望 Agent 能读取项目上下文，生成 PRD、架构设计、API 文档和风险分析，并把结果保存到指定目录。
+### Observability
+As an operator, I want to watch the live stream of messages between agents to understand how a decision was reached.
 
-### 多轮任务场景
+## 4. MVP Scope
 
-作为使用者，我希望某个 Agent 记住之前执行过的任务、偏好和项目上下文，在下一次任务中自动复用这些记忆。
+| Capability | In MVP | Notes |
+|---|---|---|
+| Agent profiles (YAML) | Yes | personality, working_style, specialization, llm_backend, worker |
+| Message bus (ACP) | Yes | SQLite-backed publish / poll / consume / get_thread |
+| Typed message intents | Yes | TASK_HANDOFF, COMPLETION_REPORT, REVIEW_DECISION, etc. |
+| Isolated memory store | Yes | short/long term; cross-agent reads rejected |
+| Agent state machine | Yes | IDLE → READING → PLANNING → EXECUTING → REPORTING → WAITING (+ ESCALATING) |
+| CLI | Yes | Typer + Rich: agent load / status / message, watch |
+| LLM provider (Anthropic) | Planned | abstracted; mock backend works today |
+| Web API / Web UI | No | future |
+| Kubernetes / distributed | No | future |
 
-## 4. MVP 范围
+## 5. Non-functional Requirements
 
-| 模块 | MVP 是否包含 | 说明 |
-| --- | --- | --- |
-| Agent Runtime | 是 | 创建 Agent、加载角色、执行任务 |
-| Memory Manager | 是 | 短期记忆 + 文件持久化，后续扩展 Redis / 向量库 |
-| Skill Registry | 是 | 注册 Skill 元数据与调用入口 |
-| Skill Scheduler | 是 | MVP 先用规则调度，后续引入 LLM 路由 |
-| Task Orchestrator | 是 | 管理任务状态、事件日志和结果聚合 |
-| CLI | 是 | 使用 Typer 或 Click 实现 |
-| Docker | 是 | 提供本地容器化运行 |
-| Web API | 否 | 后续扩展 FastAPI |
-| Kubernetes | 否 | 后续作为部署加分项 |
+- **Isolation**: an agent must never read another agent's memory.
+- **Testability**: bus, memory store, and state machine must be unit-testable in isolation.
+- **Observability**: every message and state change is persisted.
+- **Robustness**: an invalid state transition must raise a clear error, not corrupt state.
+- **Portability**: runs locally on Python with SQLite, no external services required for the MVP.
 
-## 5. 非功能需求
+## 6. Acceptance Criteria
 
-- 可扩展性：新增 Skill 不应修改核心调度器代码。
-- 可测试性：Skill Scheduler、Memory Manager、Task Orchestrator 必须可单元测试。
-- 可观测性：任务执行过程必须记录事件。
-- 稳定性：Skill 调用失败不能导致整个任务无日志退出。
-- 可移植性：本地 Python 环境和 Docker 环境都能运行。
-
-## 6. 验收标准
-
-- 可以通过 CLI 创建至少 3 个 Agent。
-- 可以提交任务并生成结构化执行结果。
-- 可以在一个任务中调用至少 2 个 Skill。
-- 可以查询 Agent Memory 和任务事件日志。
-- 至少覆盖 10 个核心单元测试。
-- Docker 镜像可构建并运行 CLI 示例任务。
-
+- Load and validate at least three agent profiles (developer, tester, reviewer).
+- Publish a message and have only the intended recipient poll it.
+- Retrieve a full conversation thread in chronological order.
+- Reading another agent's memory raises `PermissionError`.
+- An illegal state transition raises `ValueError`.
+- The CLI can inject a human message and stream the live feed.
+- A unit-test suite covers the bus, memory, and state machine.

@@ -1,104 +1,67 @@
-# AgentMesh 开发路线图
+# AgentMesh — Development Roadmap
 
-## Phase 1：文档与骨架
+The roadmap is organized as vertical slices (S1–S14). Each slice delivers a working, testable capability toward the 3-agent MVP.
 
-目标：完成项目边界、架构设计和最小目录结构。
+## Status Overview
 
-任务：
+| Slice | Description | Status |
+|---|---|---|
+| S1 | Project skeleton + agent profile loader | ✅ Done |
+| S2 | SQLite message bus | ✅ Done |
+| S3 | Isolated memory store | ✅ Done |
+| S4 | Agent state machine | ✅ Done |
+| S5 | CLI worker adapter | 🔜 Next |
+| S6 | ACP + message types (full set) | 🔜 Next |
+| S7 | LLM provider (Anthropic) | 🔜 Next |
+| S8 | Session & event log | 🔜 Next |
+| S9 | Agent supervisor | 🔜 Next |
+| S10–S12 | Developer / Tester / Reviewer agents | 🔜 Next |
+| S13 | Human operator CLI | 🔜 Next |
+| S14 | 3-agent MVP integration | 🔜 Next |
 
-- 建立 PRD、架构、API、数据模型、Skill Catalog 文档。
-- 确定 Python 包结构。
-- 定义核心 Schema。
-- 设计 CLI 命令。
+## Phase 1 — Foundations (Done)
 
-交付：
+**Goal:** establish the substrate agents communicate over.
 
-- 完整 docs 目录。
-- README 项目入口。
-- 后续可直接进入代码实现。
+- **S1 Skeleton + profile loader** — Python package, `AgentProfile` schema, YAML loader for `agents/*.yaml`.
+- **S2 Message bus** — SQLite-backed `publish` / `poll` / `consume` / `get_thread`.
+- **S3 Isolated memory** — per-agent short/long memory; cross-agent reads raise `PermissionError`.
+- **S4 State machine** — `IDLE → READING → PLANNING → EXECUTING → REPORTING → WAITING` with `ESCALATING`, enforced transitions.
 
-## Phase 2：MVP Runtime
+**Acceptance:** profiles load and validate; messages route only to their recipient; memory isolation holds; illegal transitions are rejected. Covered by the unit-test suite.
 
-目标：跑通单机多 Agent 协作闭环。
+## Phase 2 — Bringing Agents to Life (Next)
 
-任务：
+**Goal:** turn profiles into autonomous coworkers that read their inbox, think, act, and reply.
 
-- 实现 Agent Profile 加载。
-- 实现 Task Orchestrator 状态机。
-- 实现 Memory Manager 文件存储。
-- 实现 Skill Registry。
-- 实现规则版 Skill Scheduler。
-- 实现 Typer CLI。
+- **S5 CLI worker adapter** — let an agent execute work (mock and bash worker types) and report results.
+- **S6 ACP message types** — exercise the full intent set (handoff, clarification, status, completion, rejection, escalation, review request/decision).
+- **S7 LLM provider (Anthropic)** — swap the `mock` backend for real reasoning via `llm_backend` config.
 
-验收：
+**Acceptance:** an agent can receive a `TASK_HANDOFF`, run through its state machine, and emit a `COMPLETION_REPORT`.
 
-- 支持创建 3 个 Agent。
-- 支持执行 1 个完整任务。
-- 支持输出 JSON 结果。
-- 支持查看任务事件日志。
+## Phase 3 — Orchestration & Observability (Next)
 
-## Phase 3：Skill 能力增强
+**Goal:** run the organization end-to-end and make it auditable.
 
-目标：让系统具备实际任务处理能力。
+- **S8 Session & event log** — record every message and state change into `events`.
+- **S9 Agent supervisor** — a loop that polls inboxes, advances state machines, and keeps agents running.
 
-任务：
+**Acceptance:** a full session can be replayed from the event log.
 
-- planning Skill。
-- file_io Skill。
-- code_runner Skill。
-- review Skill。
-- summarize Skill。
-- LLM Provider 抽象层。
+## Phase 4 — The 3-Agent MVP (Next)
 
-验收：
+**Goal:** Alex → Jordan → Morgan deliver a task purely through natural-language messages.
 
-- 至少 5 个 Skill 可被调度。
-- 同一任务至少调用 2 个 Skill。
-- Skill 调用失败可记录并继续返回错误结构。
+- **S10–S12** — implement the Developer (Alex), Tester (Jordan), and Reviewer (Morgan) behaviors.
+- **S13 Human operator CLI** — submit tasks, inject messages, and watch the stream.
+- **S14 Integration** — the three agents collaborate to completion with no direct function calls between them.
 
-## Phase 4：并发与隔离
+**Acceptance:** a human hands off a task and observes a complete handoff → test → review → decision cycle on `agentmesh watch`.
 
-目标：提升任务执行效率和安全性。
+## Future Directions (Optional)
 
-任务：
-
-- 使用 asyncio 并发调用 LLM / IO 型 Skill。
-- 使用 multiprocessing 隔离 code_runner。
-- 增加超时控制。
-- 增加任务取消能力。
-
-验收：
-
-- 支持并发执行多个轻量 Skill。
-- code_runner 超时不会阻塞主进程。
-- 事件日志记录每个 Skill 耗时。
-
-## Phase 5：测试与工程化
-
-目标：达到可维护项目水准。
-
-任务：
-
-- 单元测试覆盖 Scheduler、Memory、Skill Registry。
-- 集成测试覆盖 task run。
-- Dockerfile。
-- GitHub Actions。
-- 示例任务与示例输出。
-
-验收：
-
-- 核心模块 10+ 个测试。
-- Docker 镜像可构建。
-- CI 能运行 lint 与 test。
-
-## Phase 6：扩展方向
-
-可选增强：
-
-- FastAPI 服务化。
-- Redis / PostgreSQL 持久化。
-- FAISS 长期语义记忆。
-- Web 执行可视化。
-- Kubernetes 部署清单。
-- 基于历史成功率的 Skill Ranking。
-
+- FastAPI service layer and a web visualization of the live message stream.
+- Postgres / Redis for multi-process deployments.
+- Semantic long-term memory via a vector store.
+- Larger organizations (more roles) to test the "coordination beats scale" thesis.

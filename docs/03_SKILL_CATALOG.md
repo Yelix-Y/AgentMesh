@@ -1,120 +1,80 @@
-# AgentMesh Skill Catalog
+# AgentMesh — Communication Protocol Catalog (ACP)
 
-## 1. Skill 设计规范
+> In AgentMesh, agents have no "skills" they invoke as tools. Their only capability for coordination is **sending messages**. This catalog defines the Agent Communication Protocol (ACP): the vocabulary of typed messages agents use to collaborate. It is the natural-language equivalent of a skill/tool catalog.
 
-每个 Skill 必须包含：
+## 1. Message Anatomy
 
-- name：唯一名称。
-- description：能力说明。
-- tags：调度标签。
-- input_schema：输入结构。
-- output_schema：输出结构。
-- timeout_seconds：最大执行时间。
-- safe_level：安全等级。
-
-Skill 元数据示例：
+Every interaction is an `ACPMessage`:
 
 ```json
 {
-  "name": "planning",
-  "description": "把复杂任务拆解为可执行步骤。",
-  "tags": ["planning", "task"],
-  "timeout_seconds": 30,
-  "safe_level": "safe"
+  "id": "uuid",
+  "thread_id": "uuid",
+  "sender_id": "alex",
+  "recipient_id": "jordan",
+  "message_type": "COMPLETION_REPORT",
+  "body": "I implemented the OAuth refresh flow. Tokens rotate every 30 min. Watch the clock-skew edge case on token expiry.",
+  "metadata": {},
+  "created_at": "2026-06-01T09:00:00Z",
+  "read": false
 }
 ```
 
-## 2. MVP Skill 清单
+- **`message_type`** declares *intent* (see §2). It is **not** a function signature.
+- **`body`** is free-form natural language — the actual content of the communication.
+- **`thread_id`** ties related messages into a conversation that any party can replay via `get_thread`.
+- **`metadata`** is an optional bag for structured hints (e.g. task id), never a substitute for the natural-language body.
 
-| Skill | 功能 | 输入 | 输出 | 可行性 | 优先级 |
-| --- | --- | --- | --- | --- | --- |
-| planning | 拆解复杂任务，生成执行计划 | task_goal, context | steps, dependencies | 容易 | P0 |
-| memory_search | 查询 Agent 历史记忆 | agent_id, query | memories, scores | 中等 | P0 |
-| file_io | 读取、写入项目文件 | path, operation, content | status, file_summary | 中等 | P0 |
-| code_runner | 执行受控命令或脚本 | command, timeout | stdout, stderr, exit_code | 中等 | P0 |
-| review | 审查任务结果和风险 | task_result, criteria | issues, suggestions | 容易 | P0 |
-| summarize | 生成任务摘要和长期记忆 | events, result | summary, memory_items | 容易 | P1 |
-| llm_call | 调用 LLM 完成自然语言推理 | prompt, schema | structured_response | 中等 | P1 |
-| web_research | 外部信息检索 | query, limit | sources, notes | 中等 | P2 |
+## 2. Message Type Reference
 
-## 3. Skill 输入输出示例
+| Type | Typical Sender → Recipient | Purpose | Body should contain |
+|---|---|---|---|
+| `TASK_HANDOFF` | human→agent, agent→agent | Pass work forward | The goal, relevant context, constraints |
+| `CLARIFICATION_REQUEST` | agent→sender | Resolve ambiguity before acting | The specific question and why it matters |
+| `STATUS_UPDATE` | agent→peer/human | Signal progress | What's done, what's next, any risk |
+| `COMPLETION_REPORT` | agent→next agent | "I'm done" handoff | What was built/found and what to watch out for |
+| `REJECTION` | agent→sender | Decline or bounce back | Why, and what would unblock acceptance |
+| `ESCALATION` | agent→human | Blocked, needs a human | The blocker and the decision required |
+| `REVIEW_REQUEST` | agent→reviewer | Ask for review | What to review and the acceptance bar |
+| `REVIEW_DECISION` | reviewer→agent | Approve or request changes | The verdict and concrete, actionable feedback |
+| `HUMAN_INTERVENTION` | human→agent | Operator-injected guidance | Any instruction from the operator |
 
-### planning
+## 3. Canonical Conversations
 
-输入：
-
-```json
-{
-  "task_goal": "为 AgentMesh 生成技术架构文档",
-  "context": "项目目标是多智能体协作与技能调度"
-}
-```
-
-输出：
-
-```json
-{
-  "steps": [
-    {
-      "step_id": "step_001",
-      "title": "确认模块边界",
-      "required_skills": ["memory_search", "planning"]
-    }
-  ],
-  "dependencies": []
-}
-```
-
-### code_runner
-
-输入：
-
-```json
-{
-  "command": "pytest tests",
-  "timeout_seconds": 60,
-  "working_dir": "."
-}
-```
-
-输出：
-
-```json
-{
-  "exit_code": 0,
-  "stdout": "10 passed",
-  "stderr": "",
-  "duration_ms": 1200
-}
-```
-
-## 4. Skill 组合方式
-
-### 文档生成链路
+### 3.1 Standard delivery thread
 
 ```text
-planning -> memory_search -> file_io -> review -> summarize
+human  --TASK_HANDOFF-->        Alex      "Build an OAuth refresh token flow."
+Alex   --COMPLETION_REPORT-->   Jordan    "Done. Here's the design and the risky edge cases."
+Jordan --COMPLETION_REPORT-->   Morgan    "Tested. Found a clock-skew bug on expiry."
+Morgan --REVIEW_DECISION-->     Alex      "Changes requested: handle clock skew, then re-submit."
 ```
 
-### 代码任务链路
+### 3.2 Blocked / ambiguous
 
 ```text
-planning -> file_io -> code_runner -> review -> summarize
+Alex   --CLARIFICATION_REQUEST--> human   "Should refresh tokens be single-use or reusable?"
+human  --HUMAN_INTERVENTION-->    Alex    "Single-use, rotate on every refresh."
 ```
 
-### 多 Agent 协作链路
+### 3.3 Escalation
 
 ```text
-Planner Agent: planning + memory_search
-Executor Agent: file_io + code_runner + llm_call
-Reviewer Agent: review + summarize
+Alex   --ESCALATION--> human   "Blocked: no access to the auth provider's sandbox credentials."
 ```
 
-## 5. 安全等级
+## 4. Protocol Conventions
 
-| 等级 | 说明 | 示例 |
-| --- | --- | --- |
-| safe | 只读或纯推理 | planning, review |
-| controlled | 可写文件或调用外部 API | file_io, llm_call |
-| isolated | 需要进程隔离或超时控制 | code_runner |
+1. **Stay in natural language.** The body is how knowledge transfers; do not smuggle the real content into `metadata`.
+2. **One intent per message.** Pick the `MessageType` that matches the dominant purpose.
+3. **Keep threads coherent.** Reply within the same `thread_id` so the conversation can be replayed.
+4. **Be explicit on handoff.** A `COMPLETION_REPORT` should always state both *what was done* and *what to watch out for*.
+5. **Escalate, don't guess.** When blocked or genuinely unsure, send `CLARIFICATION_REQUEST` or `ESCALATION` rather than fabricating.
 
+## 5. Observability
+
+Because every capability is a message, the entire collaboration is observable:
+
+- `MessageBus.poll(agent_id)` — an agent's unread inbox.
+- `MessageBus.get_thread(thread_id)` — replay a full conversation.
+- `agentmesh watch` — live, color-coded stream of all messages by type.

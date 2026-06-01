@@ -1,101 +1,89 @@
-# AgentMesh 数据模型
+# AgentMesh — Data Model
 
-## 1. 核心实体
+All state is persisted in a single SQLite database at `~/.agentmesh/agentmesh.db` (WAL mode, foreign keys on). The schema is created by `agentmesh/db/database.py::init_db()`.
+
+## 1. Entity Relationships
 
 ```mermaid
 erDiagram
-    AGENT ||--o{ MEMORY_ITEM : owns
-    AGENT ||--o{ TASK_EVENT : emits
-    TASK ||--o{ TASK_EVENT : contains
-    TASK ||--o{ SKILL_INVOCATION : invokes
-    SKILL ||--o{ SKILL_INVOCATION : used_by
+    AGENT ||--o{ MESSAGE_SENT : sends
+    AGENT ||--o{ MESSAGE_RECEIVED : receives
+    AGENT ||--o{ AGENT_MEMORY : owns
+    AGENT ||--|| AGENT_STATE : has
+    THREAD ||--o{ MESSAGE : groups
+    TASK ||--o{ EVENT : produces
+    SESSION ||--o{ EVENT : logs
 ```
 
-## 2. Agent
+There is no `SKILL` or `SKILL_INVOCATION` entity — capability is expressed as messages, not tool calls.
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| agent_id | string | Agent 唯一 ID |
-| name | string | Agent 名称 |
-| role | string | planner / executor / reviewer / custom |
-| system_prompt | string | 角色提示词 |
-| allowed_skills | list[string] | 可调用 Skill |
-| status | string | active / disabled |
-| created_at | datetime | 创建时间 |
+## 2. messages (the message bus)
 
-## 3. Task
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT PK | message UUID |
+| thread_id | TEXT | groups a conversation |
+| sender_id | TEXT | agent name or `human` |
+| recipient_id | TEXT | agent name or `human` |
+| message_type | TEXT | one of the `MessageType` values |
+| body | TEXT | natural-language content |
+| metadata_json | TEXT | JSON, defaults to `{}` |
+| created_at | TEXT | ISO-8601 timestamp |
+| read | INTEGER | 0 = unread, 1 = read |
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| task_id | string | 任务 ID |
-| input | string | 用户输入 |
-| status | string | 任务状态 |
-| assigned_agents | list[string] | 参与 Agent |
-| result | object | 最终结构化结果 |
-| created_at | datetime | 创建时间 |
-| updated_at | datetime | 更新时间 |
+This table **is** the message bus. Polling reads unread rows for a recipient; consuming flips `read` to 1.
 
-## 4. MemoryItem
+## 3. agent_memory (isolated per agent)
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| memory_id | string | 记忆 ID |
-| agent_id | string | 所属 Agent |
-| memory_type | string | short_term / long_term |
-| content | string | 记忆内容 |
-| metadata | object | 来源、标签、任务 ID |
-| importance | float | 重要性评分 |
-| created_at | datetime | 创建时间 |
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT PK | memory entry UUID |
+| agent_id | TEXT | owning agent |
+| memory_type | TEXT | `short` or `long` (CHECK constrained) |
+| content | TEXT | natural-language memory |
+| created_at | TEXT | ISO-8601 timestamp |
 
-## 5. Skill
+Access control is enforced in code: `MemoryStore.read` raises `PermissionError` when the requesting agent is not the owner. There is deliberately no cross-agent read path — knowledge moves via `messages`.
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| skill_name | string | Skill 名称 |
-| description | string | 能力描述 |
-| tags | list[string] | 调度标签 |
-| input_schema | object | 输入 Schema |
-| output_schema | object | 输出 Schema |
-| safe_level | string | safe / controlled / isolated |
-| enabled | bool | 是否启用 |
+## 4. agent_states
 
-## 6. SkillInvocation
+| Column | Type | Notes |
+|---|---|---|
+| agent_id | TEXT PK | one row per agent |
+| state | TEXT | current `AgentState` |
+| updated_at | TEXT | ISO-8601 timestamp |
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| invocation_id | string | 调用 ID |
-| task_id | string | 所属任务 |
-| agent_id | string | 发起 Agent |
-| skill_name | string | 被调用 Skill |
-| input | object | 调用输入 |
-| output | object | 调用输出 |
-| status | string | success / failed / timeout |
-| duration_ms | int | 耗时 |
-| error | string | 错误信息 |
+States: `IDLE`, `READING`, `PLANNING`, `EXECUTING`, `REPORTING`, `WAITING`, `ESCALATING`. Transitions are validated in `runtime/state_machine.py`.
 
-## 7. TaskEvent
+## 5. tasks
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| event_id | string | 事件 ID |
-| task_id | string | 任务 ID |
-| agent_id | string | 可为空 |
-| event_type | string | task_created / skill_invoked / memory_updated |
-| payload | object | 事件内容 |
-| created_at | datetime | 创建时间 |
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT PK | task UUID |
+| description | TEXT | natural-language task |
+| submitted_by | TEXT | defaults to `human` |
+| status | TEXT | defaults to `pending` |
+| created_at | TEXT | ISO-8601 timestamp |
+| completed_at | TEXT | nullable |
 
-## 8. MVP 存储策略
+## 6. events (observability log)
 
-### 阶段一
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT PK | event UUID |
+| session_id | TEXT | groups events in a run |
+| event_type | TEXT | e.g. state change, message published |
+| actor_id | TEXT | agent or `human` |
+| payload_json | TEXT | JSON, defaults to `{}` |
+| created_at | TEXT | ISO-8601 timestamp |
 
-- agents.json
-- tasks.json
-- memories/{agent_id}.json
-- events/{task_id}.jsonl
+## 7. Storage Strategy
 
-### 阶段二
+### MVP (today)
+- Single SQLite file at `~/.agentmesh/agentmesh.db`, WAL mode.
+- No external services required; the system runs fully offline with the `mock` backend.
 
-- SQLite 或 PostgreSQL 存储实体数据。
-- Redis 存储运行中任务状态。
-- FAISS / Chroma 存储长期记忆向量。
-
+### Future
+- Postgres for multi-process / multi-host deployments.
+- Redis for hot in-flight state.
+- A vector store for semantic long-term memory recall.
