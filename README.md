@@ -48,6 +48,12 @@ uv run agentmesh agent status developer
 # Watch the live message stream
 uv run agentmesh watch
 
+# Run the whole organization on a task (mock brain — no API key needed)
+uv run agentmesh run "Implement an OAuth refresh token flow."
+
+# Use real Anthropic reasoning instead of the mock (needs ANTHROPIC_API_KEY)
+uv run agentmesh run "Implement an OAuth refresh token flow." --provider anthropic
+
 # Inject a message to an agent
 uv run agentmesh agent message developer "Please implement an OAuth refresh token flow."
 ```
@@ -60,7 +66,7 @@ uv run agentmesh agent message developer "Please implement an OAuth refresh toke
 | `agentmesh/db/` | SQLite setup, shared schema |
 | `agentmesh/bus/` | Message bus — all inter-agent communication |
 | `agentmesh/memory/` | Isolated per-agent memory store |
-| `agentmesh/runtime/` | Agent state machine |
+| `agentmesh/runtime/` | Agent state machine, **harness, LLM provider, supervisor, event log** |
 | `agentmesh/cli.py` | Typer CLI entry point |
 | `agents/` | YAML profiles for Developer, Tester, Reviewer |
 
@@ -79,14 +85,14 @@ Any state → ESCALATING → IDLE
 | S2: SQLite Message Bus | ✅ Done |
 | S3: Isolated Memory Store | ✅ Done |
 | S4: Agent State Machine | ✅ Done |
-| S5: CLI Worker Adapter | 🔜 Next |
-| S6: ACP + Message Types | 🔜 Next |
-| S7: LLM Provider (Anthropic) | 🔜 Next |
-| S8: Session & Event Log | 🔜 Next |
-| S9: Agent Supervisor | 🔜 Next |
-| S10–S12: Developer / Tester / Reviewer Agents | 🔜 Next |
-| S13: Human Operator CLI | 🔜 Next |
-| S14: 3-Agent MVP Integration | 🔜 Next |
+| S5: CLI Worker Adapter (bash exec) | 🔜 Next |
+| S6: ACP + Message Types | ✅ Done |
+| S7: LLM Provider (Anthropic) | ✅ Done |
+| S8: Session & Event Log | ✅ Done |
+| S9: Agent Supervisor | ✅ Done |
+| S10–S12: Developer / Tester / Reviewer Agents | ✅ Done |
+| S13: Human Operator CLI (`agentmesh run`) | ✅ Done |
+| S14: 3-Agent MVP Integration | ✅ Done |
 
 ## Running Tests
 
@@ -94,7 +100,7 @@ Any state → ESCALATING → IDLE
 uv run pytest tests/ -v
 ```
 
-22 tests, all passing.
+37 tests, all passing.
 
 ## PRD & Issues
 

@@ -9,6 +9,7 @@ from agentmesh.models.loader import load_profile, load_profiles_from_dir
 from agentmesh.bus.message_bus import MessageBus
 from agentmesh.memory.store import MemoryStore
 from agentmesh.runtime.state_machine import AgentStateMachine
+from agentmesh.runtime.supervisor import Supervisor
 
 app = typer.Typer(
     name="agentmesh",
@@ -133,6 +134,54 @@ def watch(interval: float = typer.Option(1.0, help="Poll interval in seconds")):
             time.sleep(interval)
     except KeyboardInterrupt:
         console.print("\n[dim]Stream closed.[/dim]")
+
+
+@app.command("run")
+def run(
+    task: str = typer.Argument(..., help="The task to hand to the developer"),
+    agents_dir: Path = typer.Option(Path("agents"), "--agents-dir", help="Directory of agent YAML profiles"),
+    max_steps: int = typer.Option(50, "--max-steps", help="Safety cap on supervisor steps"),
+    session: str = typer.Option("default", "--session", help="Session id for the event log"),
+    provider: str = typer.Option("mock", "--provider", help="LLM provider: 'mock' (no API key) or 'anthropic'"),
+):
+    """Submit a task and run the whole organization until it goes quiet."""
+    import uuid
+    from agentmesh.models.message import ACPMessage, MessageType
+    from agentmesh.runtime.llm import MockLLMProvider
+
+    init_db()
+    profiles = load_profiles_from_dir(agents_dir)
+    if not profiles:
+        console.print(f"[red]Error:[/red] no agent profiles found in {agents_dir}")
+        raise typer.Exit(1)
+
+    llm = MockLLMProvider() if provider == "mock" else None
+
+    thread_id = str(uuid.uuid4())
+    bus = MessageBus()
+    bus.publish(ACPMessage(
+        thread_id=thread_id,
+        sender_id="human",
+        recipient_id="developer",
+        message_type=MessageType.HUMAN_INTERVENTION,
+        body=task,
+    ))
+
+    console.print(f"[bold cyan]AgentMesh[/bold cyan] — running task: [bold]{task}[/bold]\n")
+    result = Supervisor(profiles, session_id=session, llm=llm).run(max_steps=max_steps)
+
+    thread = bus.get_thread(thread_id)
+    for m in thread:
+        ts = m.created_at.isoformat()[11:19]
+        console.print(
+            f"[dim]{ts}[/dim]  [bold]{m.sender_id}[/bold] → [bold]{m.recipient_id}[/bold]  "
+            f"[yellow]{m.message_type.value}[/yellow]\n  [dim]{m.body}[/dim]"
+        )
+
+    status = "[green]quiescent[/green]" if result.quiescent else "[red]hit max-steps[/red]"
+    console.print(
+        f"\n{status} — {result.steps} steps, {result.messages_published} messages exchanged."
+    )
 
 
 if __name__ == "__main__":
