@@ -1,9 +1,19 @@
 import json
 import uuid
+from enum import Enum
 from datetime import datetime, timezone
 from typing import Any
 
 from agentmesh.db.database import get_connection
+
+
+class EventType(str, Enum):
+    SESSION_STARTED = "session_started"
+    SESSION_QUIESCENT = "session_quiescent"
+    SESSION_MAX_STEPS = "session_max_steps"
+    SESSION_FAILED = "session_failed"
+    MESSAGE_PUBLISHED = "message_published"
+    MESSAGE_IGNORED = "message_ignored"
 
 
 class EventLog:
@@ -13,11 +23,12 @@ class EventLog:
     def record(
         self,
         session_id: str,
-        event_type: str,
+        event_type: EventType | str,
         actor_id: str,
         payload: dict[str, Any] | None = None,
     ) -> str:
         event_id = str(uuid.uuid4())
+        event_value = event_type.value if isinstance(event_type, EventType) else event_type
         with get_connection() as conn:
             conn.execute(
                 "INSERT INTO events (id, session_id, event_type, actor_id, payload_json, created_at) "
@@ -25,7 +36,7 @@ class EventLog:
                 (
                     event_id,
                     session_id,
-                    event_type,
+                    event_value,
                     actor_id,
                     json.dumps(payload or {}),
                     datetime.now(timezone.utc).isoformat(),

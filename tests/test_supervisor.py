@@ -4,7 +4,8 @@ from agentmesh.db.database import init_db
 from agentmesh.bus.message_bus import MessageBus
 from agentmesh.models.agent import AgentProfile, LLMBackendConfig
 from agentmesh.models.message import ACPMessage, MessageType
-from agentmesh.runtime.supervisor import Supervisor
+from agentmesh.runtime.events import EventLog, EventType
+from agentmesh.runtime.supervisor import SessionStatus, Supervisor
 
 
 @pytest.fixture(autouse=True)
@@ -48,13 +49,24 @@ def test_supervisor_runs_full_handoff_test_review_cycle():
     assert ("reviewer", "developer", MessageType.REVIEW_DECISION) in hops
     assert ("developer", "human", MessageType.STATUS_UPDATE) in hops
     assert result.quiescent is True
+    assert result.status is SessionStatus.QUIESCENT
     assert result.steps <= 50
+    assert result.messages_consumed == 4
+    assert result.messages_published == 4
 
 
 def test_supervisor_quiescent_immediately_when_no_work():
     result = Supervisor(team(), session_id="s2").run(max_steps=50)
     assert result.quiescent is True
+    assert result.status is SessionStatus.QUIESCENT
     assert result.messages_published == 0
+    assert result.messages_consumed == 0
+
+    events = EventLog().read("s2")
+    assert [event["event_type"] for event in events] == [
+        EventType.SESSION_STARTED.value,
+        EventType.SESSION_QUIESCENT.value,
+    ]
 
 
 def test_supervisor_respects_max_steps_and_does_not_hang():
@@ -68,3 +80,10 @@ def test_supervisor_respects_max_steps_and_does_not_hang():
     result = Supervisor(team(), session_id="s3").run(max_steps=1)
     assert result.steps == 1
     assert result.quiescent is False
+    assert result.status is SessionStatus.MAX_STEPS
+    assert result.messages_consumed == 3
+    assert result.messages_published == 3
+
+    events = EventLog().read("s3")
+    assert events[-1]["event_type"] == EventType.SESSION_MAX_STEPS.value
+    assert events[-1]["payload"]["steps"] == 1

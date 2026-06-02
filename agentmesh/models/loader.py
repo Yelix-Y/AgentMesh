@@ -7,7 +7,7 @@ def load_profile(path: str | Path) -> AgentProfile:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Agent profile not found: {path}")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return AgentProfile(**data)
 

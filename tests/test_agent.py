@@ -109,7 +109,7 @@ def test_agent_records_work_in_own_memory():
 
 
 def test_agent_records_event_when_publishing(monkeypatch):
-    from agentmesh.runtime.events import EventLog
+    from agentmesh.runtime.events import EventLog, EventType
     bus = MessageBus()
     bus.publish(ACPMessage(
         sender_id="human",
@@ -119,8 +119,33 @@ def test_agent_records_event_when_publishing(monkeypatch):
     ))
     Agent(profile("developer"), session_id="sess-1").process_one()
     events = EventLog().read("sess-1")
-    assert any(e["actor_id"] == "developer" and e["event_type"] == "message_published"
+    assert any(e["actor_id"] == "developer" and e["event_type"] == EventType.MESSAGE_PUBLISHED.value
                for e in events)
+
+
+def test_agent_step_result_counts_ignored_messages():
+    from agentmesh.runtime.events import EventLog, EventType
+
+    bus = MessageBus()
+    bus.publish(ACPMessage(
+        sender_id="human",
+        recipient_id="tester",
+        message_type=MessageType.HUMAN_INTERVENTION,
+        body="Please do unrelated work.",
+    ))
+
+    step = Agent(profile("tester"), session_id="sess-ignored").process_next()
+
+    assert step.consumed == 1
+    assert step.published == 0
+    assert step.ignored == 1
+    assert step.outgoing is None
+    assert step.progressed is True
+    assert len(bus.poll("tester")) == 0
+
+    events = EventLog().read("sess-ignored")
+    assert events[-1]["event_type"] == EventType.MESSAGE_IGNORED.value
+    assert events[-1]["payload"]["message_type"] == MessageType.HUMAN_INTERVENTION.value
 
 
 def test_process_one_returns_none_when_inbox_empty():

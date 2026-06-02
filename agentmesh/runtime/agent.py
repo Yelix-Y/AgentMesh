@@ -1,8 +1,10 @@
+from dataclasses import dataclass
+
 from agentmesh.bus.message_bus import MessageBus
 from agentmesh.memory.store import MemoryStore
 from agentmesh.models.agent import AgentProfile
 from agentmesh.models.message import ACPMessage, MessageType
-from agentmesh.runtime.events import EventLog
+from agentmesh.runtime.events import EventLog, EventType
 from agentmesh.runtime.llm import LLMProvider, get_provider
 from agentmesh.runtime.state_machine import AgentState, AgentStateMachine
 
@@ -14,6 +16,18 @@ ROUTING: dict[tuple[str, MessageType], tuple[MessageType, str]] = {
     ("tester", MessageType.COMPLETION_REPORT): (MessageType.COMPLETION_REPORT, "reviewer"),
     ("reviewer", MessageType.COMPLETION_REPORT): (MessageType.REVIEW_DECISION, "developer"),
 }
+
+
+@dataclass(frozen=True)
+class AgentStepResult:
+    consumed: int = 0
+    published: int = 0
+    ignored: int = 0
+    outgoing: ACPMessage | None = None
+
+    @property
+    def progressed(self) -> bool:
+        return self.consumed > 0 or self.published > 0 or self.ignored > 0
 
 
 class Agent:
@@ -37,16 +51,27 @@ class Agent:
         self.events = EventLog()
         self.sm = AgentStateMachine(self.name)
 
-    def process_one(self) -> ACPMessage | None:
+    def process_next(self) -> AgentStepResult:
         inbox = self.bus.poll(self.name)
         if not inbox:
-            return None
+            return AgentStepResult()
         incoming = inbox[0]
 
         route = ROUTING.get((self.profile.role, incoming.message_type))
         if route is None:
             self.bus.consume(incoming.id)
-            return None
+            self.events.record(
+                self.session_id,
+                EventType.MESSAGE_IGNORED,
+                self.name,
+                {
+                    "message_id": incoming.id,
+                    "thread_id": incoming.thread_id,
+                    "message_type": incoming.message_type.value,
+                    "sender": incoming.sender_id,
+                },
+            )
+            return AgentStepResult(consumed=1, ignored=1)
         out_type, recipient = route
 
         self.sm.transition(AgentState.READING)
@@ -70,7 +95,7 @@ class Agent:
         self.bus.consume(incoming.id)
         self.events.record(
             self.session_id,
-            "message_published",
+            EventType.MESSAGE_PUBLISHED,
             self.name,
             {
                 "message_id": outgoing.id,
@@ -81,4 +106,8 @@ class Agent:
         )
 
         self.sm.transition(AgentState.IDLE)
-        return outgoing
+        return AgentStepResult(consumed=1, published=1, outgoing=outgoing)
+
+    def process_one(self) -> ACPMessage | None:
+        """Compatibility wrapper for callers that only need the outgoing message."""
+        return self.process_next().outgoing
